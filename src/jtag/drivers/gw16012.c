@@ -350,7 +350,7 @@ static int gw16012_get_giveio_access(void)
 	HANDLE h;
 	OSVERSIONINFO version;
 
-	version.dwOSVersionInfoSize = sizeof version;
+	version.dwOSVersionInfoSize = sizeof(version);
 	if (!GetVersionEx(&version)) {
 		errno = EINVAL;
 		return -1;
@@ -521,12 +521,17 @@ static const struct command_registration gw16012_command_handlers[] = {
 	COMMAND_REGISTRATION_DONE
 };
 
-struct jtag_interface gw16012_interface = {
+static struct jtag_interface gw16012_interface = {
+	.execute_queue = gw16012_execute_queue,
+};
+
+struct adapter_driver gw16012_adapter_driver = {
 	.name = "gw16012",
 	.transports = jtag_only,
 	.commands = gw16012_command_handlers,
 
 	.init = gw16012_init,
 	.quit = gw16012_quit,
-	.execute_queue = gw16012_execute_queue,
+
+	.jtag_ops = &gw16012_interface,
 };
