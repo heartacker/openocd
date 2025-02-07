@@ -1266,7 +1266,10 @@ static int dap_get_debugbase(struct adiv5_ap *ap,
 
 	if (!is_64bit_ap(ap))
 		baseptr_upper = 0;
-	*dbgbase = (((target_addr_t)baseptr_upper) << 32) | baseptr_lower;
+	if (ap->is_custom_baseaddr)
+		*dbgbase = ap->debug_baseaddr;
+	else
+		*dbgbase = (((target_addr_t)baseptr_upper) << 32) | baseptr_lower;
 
 	return ERROR_OK;
 }
@@ -2566,23 +2569,41 @@ COMMAND_HANDLER(dap_baseaddr_command)
 	uint32_t baseaddr_lower, baseaddr_upper;
 	struct adiv5_ap *ap;
 	target_addr_t baseaddr;
+	target_addr_t baseaddrset = 1;
+
+	/* if argv baseaddr set to
+	 * 0: then reset to default
+	 * nothing or 1: continue last status
+	 * other: set base addr and set "is_custom_baseaddr = true"
+	 */
+
 	int retval;
+
 
 	baseaddr_upper = 0;
 
-	switch (CMD_ARGC) {
-	case 0:
-		apsel = dap->apsel;
-		break;
-	case 1:
-		COMMAND_PARSE_NUMBER(u64, CMD_ARGV[0], apsel);
-		if (!is_ap_num_valid(dap, apsel)) {
-			command_print(CMD, "Invalid AP number");
-			return ERROR_COMMAND_ARGUMENT_INVALID;
-		}
-		break;
-	default:
+	if (CMD_ARGC > 2)
 		return ERROR_COMMAND_SYNTAX_ERROR;
+
+	if (CMD_ARGC == 0)
+		apsel = dap->apsel;
+
+	if (CMD_ARGC > 0)
+		COMMAND_PARSE_NUMBER(u64, CMD_ARGV[0], apsel);
+
+	if (CMD_ARGC > 1){
+		COMMAND_PARSE_NUMBER(u64, CMD_ARGV[1], baseaddrset);
+	}
+
+	if (apsel >= 256 ) {
+		command_print(CMD, "Invalid ap index value (should be less than 256)");
+		return ERROR_COMMAND_ARGUMENT_INVALID;
+	}
+
+
+	if (!is_ap_num_valid(dap, apsel)) {
+		command_print(CMD, "Invalid AP number");
+		return ERROR_COMMAND_ARGUMENT_INVALID;
 	}
 
 	/* NOTE:  assumes we're talking to a MEM-AP, which
@@ -2597,28 +2618,40 @@ COMMAND_HANDLER(dap_baseaddr_command)
 		return ERROR_FAIL;
 	}
 
-	retval = dap_queue_ap_read(ap, MEM_AP_REG_BASE(dap), &baseaddr_lower);
+	if (baseaddrset == 0 ||
+		(baseaddrset == 1 && ap->is_custom_baseaddr == false)) {
+		ap->is_custom_baseaddr = false;
+		retval = dap_queue_ap_read(ap, MEM_AP_REG_BASE(dap), &baseaddr_lower);
 
-	if (retval == ERROR_OK && ap->cfg_reg == MEM_AP_REG_CFG_INVALID)
-		retval = dap_queue_ap_read(ap, MEM_AP_REG_CFG(dap), &ap->cfg_reg);
+		if (retval == ERROR_OK && ap->cfg_reg == MEM_AP_REG_CFG_INVALID)
+			retval = dap_queue_ap_read(ap, MEM_AP_REG_CFG(dap), &ap->cfg_reg);
 
-	if (retval == ERROR_OK && (ap->cfg_reg == MEM_AP_REG_CFG_INVALID || is_64bit_ap(ap))) {
-		/* MEM_AP_REG_BASE64 is defined as 'RES0'; can be read and then ignored on 32 bits AP */
-		retval = dap_queue_ap_read(ap, MEM_AP_REG_BASE64(dap), &baseaddr_upper);
+		if (retval == ERROR_OK &&
+			(ap->cfg_reg == MEM_AP_REG_CFG_INVALID || is_64bit_ap(ap))) {
+			/* MEM_AP_REG_BASE64 is defined as 'RES0'; can be read and then
+			 * ignored on 32 bits AP */
+			retval =
+				dap_queue_ap_read(ap, MEM_AP_REG_BASE64(dap), &baseaddr_upper);
+		}
+
+		if (retval == ERROR_OK)
+			retval = dap_run(dap);
+		dap_put_ap(ap);
+		if (retval != ERROR_OK)
+			return retval;
+
+		if (is_64bit_ap(ap)) {
+			baseaddr = (((target_addr_t)baseaddr_upper) << 32) | baseaddr_lower;
+			command_print(CMD, "0x%016" PRIx64, baseaddr);
+		} else
+			command_print(CMD, "0x%08" PRIx32, baseaddr_lower);
+	} else if (baseaddrset == 1 && ap->is_custom_baseaddr == true) {
+		command_print(CMD, "custom: 0x%016" PRIx64, ap->debug_baseaddr);
+	} else {
+		ap->is_custom_baseaddr = true;
+		ap->debug_baseaddr = baseaddrset;
+		command_print(CMD, "custom: 0x%016" PRIx64, ap->debug_baseaddr);
 	}
-
-	if (retval == ERROR_OK)
-		retval = dap_run(dap);
-	dap_put_ap(ap);
-	if (retval != ERROR_OK)
-		return retval;
-
-	if (is_64bit_ap(ap)) {
-		baseaddr = (((target_addr_t)baseaddr_upper) << 32) | baseaddr_lower;
-		command_print(CMD, "0x%016" PRIx64, baseaddr);
-	} else
-		command_print(CMD, "0x%08" PRIx32, baseaddr_lower);
-
 	return ERROR_OK;
 }
 

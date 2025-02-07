@@ -326,6 +326,12 @@ struct adiv5_ap {
 
 	/* AP referenced during config. Never put it, even when refcount reaches zero */
 	bool config_ap_never_release;
+
+	/* true for specific base addr for user debugging */
+	bool is_custom_baseaddr;
+
+	/* true for specific base addr for user debugging */
+	target_addr_t debug_baseaddr;
 };
 
 
